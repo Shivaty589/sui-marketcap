@@ -14,5 +14,10 @@
       "src": "/(.*)",
       "dest": "/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "src/pages/*.jsx": {
+      "runtime": "@vercel/node"
+    }
+  }
 }
