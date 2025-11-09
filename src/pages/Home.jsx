@@ -325,11 +325,16 @@ export default function Home({ searchQuery }) {
         const parsedCache = JSON.parse(cachedData);
         setSuiTokens(parsedCache.tokens);
         setSuiPreviousPrices(parsedCache.previousPrices);
+        setSuiError(null);
+        setSuiLoading(false);
         return;
       }
     }
 
-    // Define multiple reliable Sui ecosystem APIs
+    setSuiLoading(true);
+    setSuiError(null);
+
+    // Define multiple reliable Sui ecosystem APIs with more options
     const suiApis = [
       {
         name: 'CoinGecko Sui Tokens',
@@ -359,11 +364,34 @@ export default function Home({ searchQuery }) {
           ) || [];
           return suiCoins.slice(0, 50);
         }
+      },
+      {
+        name: 'SuiVision Market',
+        url: 'https://api.suivision.xyz/v1/market/coins',
+        transform: (data) => data?.data || []
+      },
+      {
+        name: 'DefiLlama Sui',
+        url: 'https://api.llama.fi/protocol/sui',
+        transform: (data) => {
+          // This might not be direct, but try to extract tokens
+          const tokens = data?.tokens || [];
+          return tokens.map(token => ({
+            id: token.symbol,
+            name: token.name,
+            symbol: token.symbol,
+            current_price: token.price,
+            total_volume: token.volume24h,
+            market_cap: token.tvl,
+            price_change_percentage_24h: 0
+          }));
+        }
       }
     ];
 
     let suiCoins = [];
     let apiUsed = '';
+    let partialData = []; // Collect partial data even if some APIs fail
 
     // Try each API with retry logic
     for (const api of suiApis) {
@@ -371,7 +399,7 @@ export default function Home({ searchQuery }) {
         try {
           console.log(`Trying ${api.name} API (attempt ${attempt})...`);
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+          const timeoutId = setTimeout(() => controller.abort(), 15000); // Increased timeout to 15 seconds
 
           const response = await fetch(api.url, {
             signal: controller.signal,
@@ -383,7 +411,10 @@ export default function Home({ searchQuery }) {
           clearTimeout(timeoutId);
 
           if (!response.ok) {
-            console.warn(`${api.name} API failed with status: ${response.status}`);
+            console.warn(`${api.name} API failed with status: ${response.status} - ${response.statusText}`);
+            if (attempt < 3) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
             continue;
           }
 
@@ -398,12 +429,16 @@ export default function Home({ searchQuery }) {
             break;
           } else {
             console.warn(`${api.name} returned empty or invalid data`);
+            // Still collect partial data
+            if (Array.isArray(transformedData)) {
+              partialData = partialData.concat(transformedData);
+            }
           }
         } catch (err) {
           if (err.name === 'AbortError') {
             console.warn(`${api.name} API timed out`);
           } else {
-            console.warn(`${api.name} API error:`, err);
+            console.warn(`${api.name} API error:`, err.message);
           }
 
           if (attempt < 3) {
@@ -439,8 +474,15 @@ export default function Home({ searchQuery }) {
           }
         }
       } catch (broadErr) {
-        console.error("Broad CoinGecko search also failed:", broadErr);
+        console.error("Broad CoinGecko search also failed:", broadErr.message);
       }
+    }
+
+    // Use partial data if no full data
+    if (suiCoins.length === 0 && partialData.length > 0) {
+      suiCoins = partialData;
+      apiUsed = 'Partial Data';
+      console.log(`Using partial data from failed APIs: ${suiCoins.length} tokens`);
     }
 
     // If we have data from any source, process it
@@ -457,7 +499,7 @@ export default function Home({ searchQuery }) {
             console.log(`Got full market data for ${suiCoins.length} tokens`);
           }
         } catch (marketErr) {
-          console.warn("Failed to get full market data:", marketErr);
+          console.warn("Failed to get full market data:", marketErr.message);
         }
       }
 
@@ -503,6 +545,8 @@ export default function Home({ searchQuery }) {
           marketCap = parseFloat(coin.market_cap);
         } else if (coin.market_capitalization) {
           marketCap = parseFloat(coin.market_capitalization);
+        } else if (coin.tvl) {
+          marketCap = parseFloat(coin.tvl); // For DefiLlama
         }
 
         return {
@@ -527,13 +571,23 @@ export default function Home({ searchQuery }) {
         .sort((a, b) => b.market_cap - a.market_cap)
         .slice(0, 100); // Keep top 100
 
+      // If no valid tokens, try without market cap filter
+      let finalTokens = validTokens;
+      if (finalTokens.length === 0) {
+        finalTokens = tokens
+          .filter(token => token.price_usd !== '0.000000')
+          .sort((a, b) => (b.market_cap || 0) - (a.market_cap || 0))
+          .slice(0, 100);
+        console.log(`Using tokens without market cap filter: ${finalTokens.length}`);
+      }
+
       // Re-assign ranks after filtering and sorting
-      validTokens.forEach((token, index) => {
+      finalTokens.forEach((token, index) => {
         token.rank = index + 1;
       });
 
       const newSuiPreviousPrices = {};
-      validTokens.forEach(token => {
+      finalTokens.forEach(token => {
         if (token.price_usd && token.price_usd !== '0.000000') {
           newSuiPreviousPrices[token.symbol] = parseFloat(token.price_usd);
         }
@@ -542,19 +596,23 @@ export default function Home({ searchQuery }) {
 
       // Cache the successful data
       const cacheData = {
-        tokens: validTokens,
+        tokens: finalTokens,
         previousPrices: newSuiPreviousPrices
       };
       localStorage.setItem('suiTokensCache', JSON.stringify(cacheData));
       localStorage.setItem('suiTokensCacheTime', Date.now().toString());
 
-      console.log(`Final Sui tokens processed (${validTokens.length} from ${apiUsed}):`, validTokens.slice(0, 5));
-      setSuiTokens(validTokens);
+      console.log(`Final Sui tokens processed (${finalTokens.length} from ${apiUsed}):`, finalTokens.slice(0, 5));
+      setSuiTokens(finalTokens);
+      setSuiError(null);
     } else {
-      // If no APIs worked and no cache, show empty state
+      // If no APIs worked and no cache, show error but keep loading false
       console.warn("All Sui ecosystem APIs failed and no cache available");
+      setSuiError("Unable to fetch Sui ecosystem data. Please check your connection or try again later.");
       setSuiTokens([]);
     }
+
+    setSuiLoading(false);
   };
 
   const fetchTokens = async () => {
@@ -981,7 +1039,30 @@ export default function Home({ searchQuery }) {
               </div>
             </div>
           </div>
-          {(suiTokens.length > 0 || adminTokens.filter(token => token.category === 'sui').length > 0) ? (
+          {suiLoading ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#888' }}>
+              <div style={{ fontSize: '1.2em', marginBottom: '20px' }}>🐱 Loading Sui Ecosystem Data...</div>
+              <div style={{ display: "inline-block", width: "40px", height: "40px", border: "4px solid #f3f3f3", borderTop: "4px solid #38bdf8", borderRadius: "50%", animation: "spin 1s linear infinite" }}></div>
+            </div>
+          ) : suiError ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#888' }}>
+              <div style={{ fontSize: '1.2em', marginBottom: '10px', color: '#dc2626' }}>🐱 Sui Ecosystem Data Error</div>
+              <div style={{ fontSize: '0.9em', marginBottom: '20px' }}>{suiError}</div>
+              <button
+                onClick={() => fetchSuiTokens()}
+                style={{
+                  backgroundColor: '#38bdf8',
+                  color: 'white',
+                  padding: '10px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer'
+                }}
+              >
+                Retry Sui Data
+              </button>
+            </div>
+          ) : (suiTokens.length > 0 || adminTokens.filter(token => token.category === 'sui').length > 0) ? (
             <>
               <TokenTable
                 tokens={[...paginatedSuiTokens, ...adminTokens.filter(token => token.category === 'sui')]}
