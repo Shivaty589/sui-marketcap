@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/package.json",
   "name": "sui-marketcap",
   "version": "1.0.0",
   "private": true,
@@ -10,7 +11,8 @@
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.23.1"
+    "react-router-dom": "^6.30.1",
+    "recharts": "^3.3.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.0.0",
