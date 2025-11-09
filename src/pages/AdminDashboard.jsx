@@ -24,8 +24,8 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
 
   // Shared storage URL for admin tokens (JSON storage service)
-  const SHARED_STORAGE_URL = "https://api.jsonbin.io/v3/b/67d123456789012345678901"; // Replace with your actual JSONBin URL
-  const API_KEY = "your-jsonbin-api-key"; // Replace with your actual API key
+  const SHARED_STORAGE_URL = process.env.REACT_APP_JSONBIN_URL || "https://api.jsonbin.io/v3/b/67d123456789012345678901"; // Replace with your actual JSONBin URL
+  const API_KEY = process.env.REACT_APP_JSONBIN_API_KEY || "$2a$10$yjw2D4E1U/lRMft2lZakGu3vN4JqDAaS7d2a15jyItxZikENEaFW2"; // Replace with your actual API key
 
   // Hashed admin password (bcrypt hash of the secure password)
   const ADMIN_PASSWORD_HASH = "$2a$10$yjw2D4E1U/lRMft2lZakGu3vN4JqDAaS7d2a15jyItxZikENEaFW2";
