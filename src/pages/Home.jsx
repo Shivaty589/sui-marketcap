@@ -559,9 +559,15 @@ export default function Home({ searchQuery }) {
 
   const fetchTokens = async () => {
     setError(null);
-    await Promise.all([fetchGlobalTokens(), fetchSuiTokens()]);
-    setLastUpdate(new Date());
-    setLoading(false);
+    try {
+      await Promise.all([fetchGlobalTokens(), fetchSuiTokens()]);
+      setLastUpdate(new Date());
+    } catch (err) {
+      console.error("Error fetching tokens:", err);
+      setError(`Failed to load tokens: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
