@@ -23,6 +23,50 @@ export default function Home({ searchQuery }) {
     activeCryptocurrencies: 0
   });
 
+  // Shared storage for admin tokens (visible to all users)
+  const API_KEY = process.env.REACT_APP_JSONBIN_API_KEY || "$2a$10$yjw2D4E1U/lRMft2lZakGu3vN4JqDAaS7d2a15jyItxZikENEaFW2"; // Replace with your actual API key
+
+  // Use a fixed shared bin for admin tokens
+  const getSharedStorageUrl = () => {
+    const baseUrl = process.env.REACT_APP_JSONBIN_BASE_URL || "https://api.jsonbin.io/v3/b/";
+    return `${baseUrl}admin-tokens-shared`;
+  };
+
+  // Helper functions for shared admin tokens storage
+  const loadAdminTokensFromShared = async () => {
+    try {
+      const sharedStorageUrl = getSharedStorageUrl();
+      const response = await fetch(sharedStorageUrl, {
+        headers: {
+          'X-Master-Key': API_KEY,
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return data.record || [];
+      }
+    } catch (error) {
+      console.error("Error loading from shared storage:", error);
+    }
+    return [];
+  };
+
+  const saveAdminTokensToShared = async (tokens) => {
+    try {
+      const sharedStorageUrl = getSharedStorageUrl();
+      await fetch(sharedStorageUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': API_KEY,
+        },
+        body: JSON.stringify({ record: tokens }),
+      });
+    } catch (error) {
+      console.error("Error saving to shared storage:", error);
+    }
+  };
+
   const handleGlobalSort = (key) => {
     setGlobalSortConfig(prev => ({
       key,
@@ -341,30 +385,19 @@ export default function Home({ searchQuery }) {
   };
 
   useEffect(() => {
-    // Load admin tokens from localStorage
-    const loadAdminTokens = () => {
-      const savedAdminTokens = localStorage.getItem("adminTokens");
-      if (savedAdminTokens) {
-        setAdminTokens(JSON.parse(savedAdminTokens));
-      } else {
-        setAdminTokens([]);
-      }
+    // Load admin tokens from shared storage
+    const loadAdminTokens = async () => {
+      const tokens = await loadAdminTokensFromShared();
+      setAdminTokens(tokens);
     };
 
     loadAdminTokens();
 
-    // Listen for storage changes (when admin tokens are added/removed)
-    const handleStorageChange = (e) => {
-      if (e.key === "adminTokens") {
-        loadAdminTokens();
-      }
-    };
-
+    // Listen for admin tokens updates
     const handleAdminTokensUpdate = () => {
       loadAdminTokens();
     };
 
-    window.addEventListener("storage", handleStorageChange);
     window.addEventListener("adminTokensUpdated", handleAdminTokensUpdate);
 
     fetchTokens();
@@ -374,7 +407,7 @@ export default function Home({ searchQuery }) {
     }, 30000); // Updated to 30 seconds for more frequent updates
 
     return () => {
-      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("adminTokensUpdated", handleAdminTokensUpdate);
       clearInterval(interval);
     };
   }, []);

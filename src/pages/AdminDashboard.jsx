@@ -23,17 +23,23 @@ export default function AdminDashboard() {
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
-  // Shared storage URL for admin tokens (JSON storage service)
-  const SHARED_STORAGE_URL = process.env.REACT_APP_JSONBIN_URL || "https://api.jsonbin.io/v3/b/67d123456789012345678901"; // Replace with your actual JSONBin URL
+  // Shared storage for admin tokens (visible to all users)
   const API_KEY = process.env.REACT_APP_JSONBIN_API_KEY || "$2a$10$yjw2D4E1U/lRMft2lZakGu3vN4JqDAaS7d2a15jyItxZikENEaFW2"; // Replace with your actual API key
+
+  // Use a fixed shared bin for admin tokens
+  const getSharedStorageUrl = () => {
+    const baseUrl = process.env.REACT_APP_JSONBIN_BASE_URL || "https://api.jsonbin.io/v3/b/";
+    return `${baseUrl}admin-tokens-shared`;
+  };
 
   // Admin password - in production, use environment variables or proper backend auth
   const ADMIN_PASSWORD = process.env.REACT_APP_ADMIN_PASSWORD || "suiowner2024";
 
-  // Helper functions for shared storage
+  // Helper functions for shared admin tokens storage
   const loadAdminTokensFromShared = async () => {
     try {
-      const response = await fetch(SHARED_STORAGE_URL, {
+      const sharedStorageUrl = getSharedStorageUrl();
+      const response = await fetch(sharedStorageUrl, {
         headers: {
           'X-Master-Key': API_KEY,
         },
@@ -50,13 +56,14 @@ export default function AdminDashboard() {
 
   const saveAdminTokensToShared = async (tokens) => {
     try {
-      await fetch(SHARED_STORAGE_URL, {
+      const sharedStorageUrl = getSharedStorageUrl();
+      await fetch(sharedStorageUrl, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'X-Master-Key': API_KEY,
         },
-        body: JSON.stringify(tokens),
+        body: JSON.stringify({ record: tokens }),
       });
     } catch (error) {
       console.error("Error saving to shared storage:", error);
@@ -64,18 +71,9 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    // Load admin tokens from shared storage first, fallback to localStorage
+    // Load admin tokens from shared storage
     const loadTokens = async () => {
-      let tokens = await loadAdminTokensFromShared();
-      if (tokens.length === 0) {
-        // Fallback to localStorage if shared storage is empty
-        const savedTokens = localStorage.getItem("adminTokens");
-        if (savedTokens) {
-          tokens = JSON.parse(savedTokens);
-          // Sync to shared storage
-          await saveAdminTokensToShared(tokens);
-        }
-      }
+      const tokens = await loadAdminTokensFromShared();
       setAdminTokens(tokens);
     };
 
@@ -403,7 +401,6 @@ export default function AdminDashboard() {
 
     const updatedTokens = [...adminTokens, newToken];
     setAdminTokens(updatedTokens);
-    localStorage.setItem("adminTokens", JSON.stringify(updatedTokens));
     await saveAdminTokensToShared(updatedTokens);
     window.dispatchEvent(new CustomEvent('adminTokensUpdated'));
 
@@ -427,7 +424,6 @@ export default function AdminDashboard() {
   const handleDeleteToken = async (tokenId) => {
     const updatedTokens = adminTokens.filter(token => token.id !== tokenId);
     setAdminTokens(updatedTokens);
-    localStorage.setItem("adminTokens", JSON.stringify(updatedTokens));
     await saveAdminTokensToShared(updatedTokens);
   };
 
