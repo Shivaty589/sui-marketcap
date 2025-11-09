@@ -310,26 +310,7 @@ export default function Home({ searchQuery }) {
   };
 
   const fetchSuiTokens = async () => {
-    console.log("Fetching Sui tokens with caching and multiple APIs...");
-
-    // Check for cached data first (valid for 30 minutes)
-    const cachedData = localStorage.getItem('suiTokensCache');
-    const cacheTimestamp = localStorage.getItem('suiTokensCacheTime');
-
-    if (cachedData && cacheTimestamp) {
-      const cacheAge = Date.now() - parseInt(cacheTimestamp);
-      const cacheValidTime = 30 * 60 * 1000; // 30 minutes
-
-      if (cacheAge < cacheValidTime) {
-        console.log("Using cached Sui tokens data");
-        const parsedCache = JSON.parse(cachedData);
-        setSuiTokens(parsedCache.tokens);
-        setSuiPreviousPrices(parsedCache.previousPrices);
-        setSuiError(null);
-        setSuiLoading(false);
-        return;
-      }
-    }
+    console.log("Fetching Sui tokens with multiple APIs...");
 
     setSuiLoading(true);
     setSuiError(null);
