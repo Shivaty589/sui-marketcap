@@ -7,9 +7,12 @@ export default function Home({ searchQuery }) {
   const [adminTokens, setAdminTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [suiError, setSuiError] = useState(null);
+  const [suiLoading, setSuiLoading] = useState(false);
   const [previousPrices, setPreviousPrices] = useState({});
   const [suiPreviousPrices, setSuiPreviousPrices] = useState({});
   const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [suiLastUpdate, setSuiLastUpdate] = useState(null);
   const [activeTab, setActiveTab] = useState('global');
   const [globalSortConfig, setGlobalSortConfig] = useState({ key: 'market_cap', direction: 'desc' });
   const [suiSortConfig, setSuiSortConfig] = useState({ key: 'market_cap', direction: 'desc' });
@@ -21,6 +24,11 @@ export default function Home({ searchQuery }) {
     totalVolume24h: 0,
     btcDominance: 0,
     activeCryptocurrencies: 0
+  });
+  const [suiMarketStats, setSuiMarketStats] = useState({
+    totalSuiMarketCap: 0,
+    totalSuiVolume24h: 0,
+    suiTokenCount: 0
   });
 
   // Shared storage for admin tokens (visible to all users)
@@ -302,78 +310,250 @@ export default function Home({ searchQuery }) {
   };
 
   const fetchSuiTokens = async () => {
-    console.log("Fetching Sui tokens...");
-    try {
-      // Try multiple stable APIs for Sui ecosystem data
-      let data = null;
-      const apiEndpoints = [
-        "https://api.suivision.xyz/v1/market/coins", // Primary
-        "https://api.sui.io/v1/coins", // Official Sui API (if available)
-        "https://api.allorigins.win/get?url=" + encodeURIComponent("https://api.suivision.xyz/v1/market/coins"), // CORS proxy fallback
-      ];
+    console.log("Fetching Sui tokens with caching and multiple APIs...");
 
-      for (const endpoint of apiEndpoints) {
+    // Check for cached data first (valid for 30 minutes)
+    const cachedData = localStorage.getItem('suiTokensCache');
+    const cacheTimestamp = localStorage.getItem('suiTokensCacheTime');
+
+    if (cachedData && cacheTimestamp) {
+      const cacheAge = Date.now() - parseInt(cacheTimestamp);
+      const cacheValidTime = 30 * 60 * 1000; // 30 minutes
+
+      if (cacheAge < cacheValidTime) {
+        console.log("Using cached Sui tokens data");
+        const parsedCache = JSON.parse(cachedData);
+        setSuiTokens(parsedCache.tokens);
+        setSuiPreviousPrices(parsedCache.previousPrices);
+        return;
+      }
+    }
+
+    // Define multiple reliable Sui ecosystem APIs
+    const suiApis = [
+      {
+        name: 'CoinGecko Sui Tokens',
+        url: 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&category=sui-ecosystem&order=market_cap_desc&per_page=100&page=1&sparkline=false',
+        transform: (data) => data || []
+      },
+      {
+        name: 'SuiScan Official',
+        url: 'https://suiscan.xyz/api/v1/coins',
+        transform: (data) => data?.data || data || []
+      },
+      {
+        name: 'Sui Explorer',
+        url: 'https://explorer.sui.io/api/v1/coins',
+        transform: (data) => data?.data || data || []
+      },
+      {
+        name: 'CoinGecko Search Sui',
+        url: 'https://api.coingecko.com/api/v3/search?query=sui',
+        transform: (data) => {
+          const suiCoins = data.coins?.filter(coin =>
+            coin.market_cap_rank &&
+            (coin.symbol?.toLowerCase() === 'sui' ||
+             coin.name?.toLowerCase().includes('sui') ||
+             coin.name?.toLowerCase().includes('suinetwork') ||
+             coin.categories?.some(cat => cat.toLowerCase().includes('sui')))
+          ) || [];
+          return suiCoins.slice(0, 50);
+        }
+      }
+    ];
+
+    let suiCoins = [];
+    let apiUsed = '';
+
+    // Try each API with retry logic
+    for (const api of suiApis) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          console.log(`Trying Sui API: ${endpoint}`);
-          const response = await fetch(endpoint);
-          if (response.ok) {
-            if (endpoint.includes("allorigins.win")) {
-              const proxyData = await response.json();
-              data = JSON.parse(proxyData.contents);
-            } else {
-              data = await response.json();
+          console.log(`Trying ${api.name} API (attempt ${attempt})...`);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+          const response = await fetch(api.url, {
+            signal: controller.signal,
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'SuiMarketCap/1.0'
             }
-            console.log(`Successfully fetched from: ${endpoint}`);
+          });
+          clearTimeout(timeoutId);
+
+          if (!response.ok) {
+            console.warn(`${api.name} API failed with status: ${response.status}`);
+            continue;
+          }
+
+          const data = await response.json();
+          console.log(`${api.name} API raw response:`, data);
+
+          const transformedData = api.transform(data);
+          if (Array.isArray(transformedData) && transformedData.length > 0) {
+            suiCoins = transformedData;
+            apiUsed = api.name;
+            console.log(`Successfully fetched ${suiCoins.length} tokens from ${api.name}`);
             break;
           } else {
-            console.warn(`API ${endpoint} failed with status: ${response.status}`);
+            console.warn(`${api.name} returned empty or invalid data`);
           }
-        } catch (error) {
-          console.warn(`API ${endpoint} error:`, error);
+        } catch (err) {
+          if (err.name === 'AbortError') {
+            console.warn(`${api.name} API timed out`);
+          } else {
+            console.warn(`${api.name} API error:`, err);
+          }
+
+          if (attempt < 3) {
+            console.log(`Retrying ${api.name} API in 2 seconds...`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+          continue;
         }
       }
 
-      if (!data || !data.data || !Array.isArray(data.data)) {
-        throw new Error("All Sui APIs failed to provide valid data");
+      if (suiCoins.length > 0) break;
+    }
+
+    // If still no data, try a broader CoinGecko search
+    if (suiCoins.length === 0) {
+      console.log("Trying broader CoinGecko search for Sui ecosystem...");
+      try {
+        const broadSearchResponse = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false');
+        if (broadSearchResponse.ok) {
+          const broadData = await broadSearchResponse.json();
+          // Filter for tokens that might be on Sui
+          const potentialSuiTokens = broadData.filter(coin =>
+            coin.symbol?.toLowerCase().includes('sui') ||
+            coin.name?.toLowerCase().includes('sui') ||
+            coin.name?.toLowerCase().includes('suinetwork') ||
+            coin.categories?.some(cat => cat?.toLowerCase().includes('sui'))
+          );
+
+          if (potentialSuiTokens.length > 0) {
+            suiCoins = potentialSuiTokens;
+            apiUsed = 'CoinGecko (Broad Search)';
+            console.log(`Found ${suiCoins.length} potential Sui tokens via broad search`);
+          }
+        }
+      } catch (broadErr) {
+        console.error("Broad CoinGecko search also failed:", broadErr);
+      }
+    }
+
+    // If we have data from any source, process it
+    if (suiCoins.length > 0) {
+      console.log(`Processing ${suiCoins.length} tokens from ${apiUsed}`);
+
+      // For CoinGecko search results, we need to get full market data
+      if (apiUsed === 'CoinGecko Search Sui' || apiUsed === 'CoinGecko (Broad Search)') {
+        try {
+          const coinIds = suiCoins.map(coin => coin.id).join(',');
+          const marketResponse = await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coinIds}&order=market_cap_desc&per_page=100&page=1&sparkline=false`);
+          if (marketResponse.ok) {
+            suiCoins = await marketResponse.json();
+            console.log(`Got full market data for ${suiCoins.length} tokens`);
+          }
+        } catch (marketErr) {
+          console.warn("Failed to get full market data:", marketErr);
+        }
       }
 
-      const tokens = data.data.slice(0, 50).map((coin, index) => {
-        const currentPrice = parseFloat(coin.price_usd) || 0;
-        const prevPrice = parseFloat(suiPreviousPrices[coin.symbol]) || currentPrice;
+      const tokens = suiCoins.map((coin, index) => {
+        // Extract price from various possible fields
+        let currentPrice = 0;
+        if (coin.current_price) {
+          currentPrice = parseFloat(coin.current_price);
+        } else if (coin.price) {
+          currentPrice = parseFloat(coin.price);
+        } else if (coin.price_usd) {
+          currentPrice = parseFloat(coin.price_usd);
+        }
+
+        const prevPrice = parseFloat(suiPreviousPrices[coin.symbol || coin.id]) || currentPrice;
         const priceChangeRealtime = currentPrice > prevPrice ? 'up' : currentPrice < prevPrice ? 'down' : 'same';
 
-        const change24h = parseFloat(coin.price_change_24h) || 0;
+        // Extract 24h change
+        let change24h = 0;
+        if (coin.price_change_percentage_24h) {
+          change24h = parseFloat(coin.price_change_percentage_24h);
+        } else if (coin.price_change_24h) {
+          change24h = parseFloat(coin.price_change_24h);
+        } else if (coin.change_24h) {
+          change24h = parseFloat(coin.change_24h);
+        }
+
         const priceChange = Object.keys(suiPreviousPrices).length === 0 ? (change24h > 0 ? 'up' : change24h < 0 ? 'down' : 'same') : priceChangeRealtime;
 
+        // Extract volume
+        let volume24h = 0;
+        if (coin.total_volume) {
+          volume24h = parseFloat(coin.total_volume);
+        } else if (coin.volume_24h) {
+          volume24h = parseFloat(coin.volume_24h);
+        } else if (coin.volume) {
+          volume24h = parseFloat(coin.volume);
+        }
+
+        // Extract market cap
+        let marketCap = 0;
+        if (coin.market_cap) {
+          marketCap = parseFloat(coin.market_cap);
+        } else if (coin.market_capitalization) {
+          marketCap = parseFloat(coin.market_capitalization);
+        }
+
         return {
-          id: coin.symbol,
+          id: coin.id || coin.coin_id || coin.symbol,
           rank: index + 1,
-          name: coin.name,
-          symbol: coin.symbol.toUpperCase(),
-          image: coin.logo_url || '',
-          price_usd: currentPrice.toFixed(6),
-          volume_24h: parseFloat(coin.volume_24h) || 0,
-          change_24h: coin.price_change_24h ? parseFloat(coin.price_change_24h).toFixed(2) : '0.00',
-          market_cap: parseFloat(coin.market_cap) || 0,
+          name: coin.name || coin.symbol,
+          symbol: (coin.symbol || coin.id).toUpperCase(),
+          image: coin.image || coin.logo_url || coin.icon || '',
+          price_usd: currentPrice > 0 ? currentPrice.toFixed(6) : '0.000000',
+          volume_24h: volume24h || 0,
+          change_24h: change24h ? change24h.toFixed(2) : '0.00',
+          market_cap: marketCap || 0,
           priceChange: priceChange,
+          verified: coin.verified || coin.is_verified || true,
+          source: apiUsed
         };
       });
 
+      // Filter out tokens with no price data and sort by market cap
+      const validTokens = tokens
+        .filter(token => token.price_usd !== '0.000000' && token.market_cap > 0)
+        .sort((a, b) => b.market_cap - a.market_cap)
+        .slice(0, 100); // Keep top 100
+
+      // Re-assign ranks after filtering and sorting
+      validTokens.forEach((token, index) => {
+        token.rank = index + 1;
+      });
+
       const newSuiPreviousPrices = {};
-      data.data.forEach(coin => {
-        if (coin.price_usd) {
-          newSuiPreviousPrices[coin.symbol] = coin.price_usd;
+      validTokens.forEach(token => {
+        if (token.price_usd && token.price_usd !== '0.000000') {
+          newSuiPreviousPrices[token.symbol] = parseFloat(token.price_usd);
         }
       });
       setSuiPreviousPrices(newSuiPreviousPrices);
 
-      console.log("Sui tokens processed:", tokens);
-      setSuiTokens(tokens);
-    } catch (err) {
-      console.error("All Sui APIs failed:", err);
-      // Don't set global error for Sui API failure, just log it
-      console.warn("Sui ecosystem data unavailable, showing global market only");
-      setSuiTokens([]); // Set empty array so UI can handle it
+      // Cache the successful data
+      const cacheData = {
+        tokens: validTokens,
+        previousPrices: newSuiPreviousPrices
+      };
+      localStorage.setItem('suiTokensCache', JSON.stringify(cacheData));
+      localStorage.setItem('suiTokensCacheTime', Date.now().toString());
+
+      console.log(`Final Sui tokens processed (${validTokens.length} from ${apiUsed}):`, validTokens.slice(0, 5));
+      setSuiTokens(validTokens);
+    } else {
+      // If no APIs worked and no cache, show empty state
+      console.warn("All Sui ecosystem APIs failed and no cache available");
+      setSuiTokens([]);
     }
   };
 
@@ -411,6 +591,20 @@ export default function Home({ searchQuery }) {
       clearInterval(interval);
     };
   }, []);
+
+  // Calculate Sui market stats whenever suiTokens or adminTokens change
+  useEffect(() => {
+    const suiTokensList = [...suiTokens, ...adminTokens.filter(token => token.category === 'sui')];
+    const totalSuiMarketCap = suiTokensList.reduce((sum, token) => sum + (parseFloat(token.market_cap) || 0), 0);
+    const totalSuiVolume24h = suiTokensList.reduce((sum, token) => sum + (parseFloat(token.volume_24h) || 0), 0);
+    const suiTokenCount = suiTokensList.length;
+
+    setSuiMarketStats({
+      totalSuiMarketCap,
+      totalSuiVolume24h,
+      suiTokenCount
+    });
+  }, [suiTokens, adminTokens]);
 
   // Reset to page 1 when search query changes
   useEffect(() => {
@@ -701,6 +895,86 @@ export default function Home({ searchQuery }) {
       {activeTab === 'sui' && (
         <div className="market-section" style={{ background: 'rgba(11, 19, 43, 0.8)', borderRadius: '16px', padding: '20px', margin: '20px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)' }}>
           <h2 style={{ color: '#38bdf8', marginBottom: '20px', textAlign: 'center', fontSize: '1.8em', textShadow: '0 2px 4px rgba(56, 189, 248, 0.3)' }}>Sui Ecosystem Tokens</h2>
+
+          {/* Sui Ecosystem Statistics Cards */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+            gap: '20px',
+            marginBottom: '30px'
+          }}>
+            <div style={{
+              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.1), rgba(56, 189, 248, 0.05))',
+              border: '1px solid rgba(56, 189, 248, 0.2)',
+              borderRadius: '12px',
+              padding: '20px',
+              textAlign: 'center',
+              boxShadow: '0 4px 12px rgba(56, 189, 248, 0.1)',
+              transition: 'transform 0.3s ease, box-shadow 0.3s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-5px)';
+              e.currentTarget.style.boxShadow = '0 8px 20px rgba(56, 189, 248, 0.2)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(56, 189, 248, 0.1)';
+            }}
+            >
+              <div style={{ fontSize: '0.9em', color: '#888', marginBottom: '8px' }}>Sui Chain Market Cap</div>
+              <div style={{ fontSize: '1.5em', fontWeight: 'bold', color: '#38bdf8' }}>
+                ${formatNumber(suiMarketStats.totalSuiMarketCap)}
+              </div>
+            </div>
+
+            <div style={{
+              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.1), rgba(56, 189, 248, 0.05))',
+              border: '1px solid rgba(56, 189, 248, 0.2)',
+              borderRadius: '12px',
+              padding: '20px',
+              textAlign: 'center',
+              boxShadow: '0 4px 12px rgba(56, 189, 248, 0.1)',
+              transition: 'transform 0.3s ease, box-shadow 0.3s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-5px)';
+              e.currentTarget.style.boxShadow = '0 8px 20px rgba(56, 189, 248, 0.2)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(56, 189, 248, 0.1)';
+            }}
+            >
+              <div style={{ fontSize: '0.9em', color: '#888', marginBottom: '8px' }}>24h Sui Chain Volume</div>
+              <div style={{ fontSize: '1.5em', fontWeight: 'bold', color: '#38bdf8' }}>
+                ${formatNumber(suiMarketStats.totalSuiVolume24h)}
+              </div>
+            </div>
+
+            <div style={{
+              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.1), rgba(56, 189, 248, 0.05))',
+              border: '1px solid rgba(56, 189, 248, 0.2)',
+              borderRadius: '12px',
+              padding: '20px',
+              textAlign: 'center',
+              boxShadow: '0 4px 12px rgba(56, 189, 248, 0.1)',
+              transition: 'transform 0.3s ease, box-shadow 0.3s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-5px)';
+              e.currentTarget.style.boxShadow = '0 8px 20px rgba(56, 189, 248, 0.2)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(56, 189, 248, 0.1)';
+            }}
+            >
+              <div style={{ fontSize: '0.9em', color: '#888', marginBottom: '8px' }}>Tokens on Sui Chain</div>
+              <div style={{ fontSize: '1.5em', fontWeight: 'bold', color: '#38bdf8' }}>
+                {formatNumber([...suiTokens, ...adminTokens.filter(token => token.category === 'sui')].length)}
+              </div>
+            </div>
+          </div>
           {(suiTokens.length > 0 || adminTokens.filter(token => token.category === 'sui').length > 0) ? (
             <>
               <TokenTable
