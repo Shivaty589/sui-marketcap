@@ -23,8 +23,45 @@ export default function AdminDashboard() {
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
+  // Shared storage URL for admin tokens (JSON storage service)
+  const SHARED_STORAGE_URL = "https://api.jsonbin.io/v3/b/67d123456789012345678901"; // Replace with your actual JSONBin URL
+  const API_KEY = "your-jsonbin-api-key"; // Replace with your actual API key
+
   // Hashed admin password (bcrypt hash of the secure password)
   const ADMIN_PASSWORD_HASH = "$2a$10$yjw2D4E1U/lRMft2lZakGu3vN4JqDAaS7d2a15jyItxZikENEaFW2";
+
+  // Helper functions for shared storage
+  const loadAdminTokensFromShared = async () => {
+    try {
+      const response = await fetch(SHARED_STORAGE_URL, {
+        headers: {
+          'X-Master-Key': API_KEY,
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return data.record || [];
+      }
+    } catch (error) {
+      console.error("Error loading from shared storage:", error);
+    }
+    return [];
+  };
+
+  const saveAdminTokensToShared = async (tokens) => {
+    try {
+      await fetch(SHARED_STORAGE_URL, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': API_KEY,
+        },
+        body: JSON.stringify(tokens),
+      });
+    } catch (error) {
+      console.error("Error saving to shared storage:", error);
+    }
+  };
 
   // Simple bcrypt verification (in production, use proper backend auth)
   const verifyPassword = async (inputPassword) => {
@@ -47,11 +84,22 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    // Load admin tokens from localStorage
-    const savedTokens = localStorage.getItem("adminTokens");
-    if (savedTokens) {
-      setAdminTokens(JSON.parse(savedTokens));
-    }
+    // Load admin tokens from shared storage first, fallback to localStorage
+    const loadTokens = async () => {
+      let tokens = await loadAdminTokensFromShared();
+      if (tokens.length === 0) {
+        // Fallback to localStorage if shared storage is empty
+        const savedTokens = localStorage.getItem("adminTokens");
+        if (savedTokens) {
+          tokens = JSON.parse(savedTokens);
+          // Sync to shared storage
+          await saveAdminTokensToShared(tokens);
+        }
+      }
+      setAdminTokens(tokens);
+    };
+
+    loadTokens();
   }, []);
 
   const handlePasswordSubmit = (e) => {
@@ -344,7 +392,7 @@ export default function AdminDashboard() {
     }));
   };
 
-  const handleAddToken = () => {
+  const handleAddToken = async () => {
     if (!formData.name || !formData.symbol || !formData.owner) {
       setError("Please fill in name, symbol, and owner");
       return;
@@ -371,6 +419,7 @@ export default function AdminDashboard() {
     const updatedTokens = [...adminTokens, newToken];
     setAdminTokens(updatedTokens);
     localStorage.setItem("adminTokens", JSON.stringify(updatedTokens));
+    await saveAdminTokensToShared(updatedTokens);
     window.dispatchEvent(new CustomEvent('adminTokensUpdated'));
 
     // Reset form
@@ -390,10 +439,11 @@ export default function AdminDashboard() {
     setError("");
   };
 
-  const handleDeleteToken = (tokenId) => {
+  const handleDeleteToken = async (tokenId) => {
     const updatedTokens = adminTokens.filter(token => token.id !== tokenId);
     setAdminTokens(updatedTokens);
     localStorage.setItem("adminTokens", JSON.stringify(updatedTokens));
+    await saveAdminTokensToShared(updatedTokens);
   };
 
   const handleLogout = () => {
