@@ -27,8 +27,8 @@ export default function AdminDashboard() {
   const SHARED_STORAGE_URL = process.env.REACT_APP_JSONBIN_URL || "https://api.jsonbin.io/v3/b/67d123456789012345678901"; // Replace with your actual JSONBin URL
   const API_KEY = process.env.REACT_APP_JSONBIN_API_KEY || "$2a$10$yjw2D4E1U/lRMft2lZakGu3vN4JqDAaS7d2a15jyItxZikENEaFW2"; // Replace with your actual API key
 
-  // Hashed admin password (bcrypt hash of the secure password)
-  const ADMIN_PASSWORD_HASH = "$2a$10$yjw2D4E1U/lRMft2lZakGu3vN4JqDAaS7d2a15jyItxZikENEaFW2";
+  // Admin password - in production, use environment variables or proper backend auth
+  const ADMIN_PASSWORD = process.env.REACT_APP_ADMIN_PASSWORD || "suiowner2024";
 
   // Helper functions for shared storage
   const loadAdminTokensFromShared = async () => {
@@ -63,26 +63,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // Simple bcrypt verification (in production, use proper backend auth)
-  const verifyPassword = async (inputPassword) => {
-    // For demo purposes, we'll do a simple hash comparison
-    // In production, this should be done on the server-side
-    try {
-      // Using Web Crypto API for basic hashing (not as secure as bcrypt but works for demo)
-      const encoder = new TextEncoder();
-      const data = encoder.encode(inputPassword);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-      // For now, we'll use a simple comparison - replace with proper bcrypt verification
-      return inputPassword === "suiowner2024"; // Temporary fallback
-    } catch (error) {
-      console.error("Password verification error:", error);
-      return false;
-    }
-  };
-
   useEffect(() => {
     // Load admin tokens from shared storage first, fallback to localStorage
     const loadTokens = async () => {
@@ -104,10 +84,15 @@ export default function AdminDashboard() {
 
   const handlePasswordSubmit = (e) => {
     e.preventDefault();
+    console.log("Password entered:", password);
+    console.log("Expected password:", ADMIN_PASSWORD);
     if (password === ADMIN_PASSWORD) {
+      console.log("Password correct, authenticating...");
       setIsAuthenticated(true);
       setShowPasswordPrompt(false);
+      setError("");
     } else {
+      console.log("Password incorrect");
       setError("Invalid password");
     }
   };
