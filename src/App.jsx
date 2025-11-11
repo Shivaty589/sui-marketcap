@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect } from "react";
 import { Routes, Route, Link, useNavigate } from "react-router-dom";
 import Home from "./pages/Home";
 import TokenDetail from "./pages/TokenDetail";
 import AdminDashboard from "./pages/AdminDashboard";
 
 export default function App() {
-  const [searchQuery, setSearchQuery] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -25,13 +24,6 @@ export default function App() {
       <header className="header">
         <Link to="/" className="logo">SuiMarketCap</Link>
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <input
-            className="search"
-            type="text"
-            placeholder="Search tokens..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
           <div style={{ position: 'absolute', top: '10px', right: '10px', opacity: 0.1 }}>
             <Link
               to="/admin"
@@ -47,7 +39,7 @@ export default function App() {
         </div>
       </header>
       <Routes>
-        <Route path="/" element={<Home searchQuery={searchQuery} />} />
+        <Route path="/" element={<Home />} />
         <Route path="/token/:symbol" element={<TokenDetail />} />
         <Route path="/admin" element={<AdminDashboard />} />
       </Routes>
